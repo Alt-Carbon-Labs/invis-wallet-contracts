@@ -1,93 +1,59 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.4;
 
-import "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
-import "@openzeppelin/contracts/token/ERC1155/extensions/ERC1155Burnable.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/token/ERC1155/extensions/ERC1155Supply.sol";
-import "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Receiver.sol";
+import "@openzeppelin/contracts@4.8.0/token/ERC721/ERC721.sol";
+import "@openzeppelin/contracts@4.8.0/token/ERC721/extensions/ERC721Enumerable.sol";
+import "@openzeppelin/contracts@4.8.0/token/ERC721/extensions/ERC721URIStorage.sol";
+import "@openzeppelin/contracts@4.8.0/access/Ownable.sol";
+import "@openzeppelin/contracts@4.8.0/utils/Counters.sol";
 
-contract characterNFT is ERC1155, ERC1155Burnable, Ownable, ERC1155Supply {
-    uint8 public level = 0;
+contract Character is ERC721, ERC721Enumerable, ERC721URIStorage {
+    using Counters for Counters.Counter;
 
-    struct accessLevel {
-        bool isExperiencedUser;
-        bool isPremiumUser;
+    Counters.Counter private _tokenIdCounter;
+    uint256 MAX_SUPPLY = 5;
+
+    constructor() ERC721("Character", "CHAR") {}
+
+    function _baseURI() internal pure override returns (string memory) {
+        return "ipfs://Qmb5Ua5Qtoo3tSry7nxDf3X4mvFLZM9HY7BTrS1s5MzH7g/";
     }
 
-    mapping(address => accessLevel) public levelOfAccess;
-
-    event NFTIsMinted(address indexed account, string message);
-    event trialNFTIsMinted(address indexed account, string message);
-    event Attest(address indexed to, uint256 indexed tokenId);
-
-    constructor() ERC1155("http://127.0.0.1:5500/api/characterNFT/{id}.json") {}
-
-    function mint(address distributorAddress, uint256 id, uint256 amount, bytes memory data) public onlyOwner {
-        // msg.sender is the caller of the function but the distributor is the owner of the contract
-        _mint(distributorAddress, id, amount, data);
-        emit NFTIsMinted(msg.sender, "NFT is minted");
-    }
-    // Group minting
-
-    function resetToNewUser(address accountToReset) public onlyOwner {
-        levelOfAccess[accountToReset].isExperiencedUser = false;
-    }
-
-    function trialNFTMint(uint256 id, uint256 amount, bytes memory data) public onlyNewUser {
-        _mint(msg.sender, id, amount, data);
-        emit trialNFTIsMinted(msg.sender, "Trial NFT is minted");
-    }
-
-    // SHOULD GO IN TEST
-
-    modifier onlyNewUser() {
-        require(levelOfAccess[msg.sender].isExperiencedUser == false, "Not a new user");
-        _;
-        levelOfAccess[msg.sender].isExperiencedUser = true;
-    }
-
-    modifier isExperiencedToPremium() {
-        require(
-            levelOfAccess[msg.sender].isExperiencedUser == true && levelOfAccess[msg.sender].isPremiumUser == false,
-            "Not an experienced user"
-        );
-        _;
-        levelOfAccess[msg.sender].isPremiumUser = true;
-    }
-
-    function makePremium() external isExperiencedToPremium {}
-
-    function levelUp() external {
-        level++;
-    }
-
-    function mintBatch(address to, uint256[] memory ids, uint256[] memory amounts, bytes memory data)
-        public
-        onlyOwner
-    {
-        _mintBatch(to, ids, amounts, data);
+    function safeMint(address to, string memory uri) public {
+        uint256 tokenId = _tokenIdCounter.current();
+        _tokenIdCounter.increment();
+        _safeMint(to, tokenId);
+        _setTokenURI(tokenId, uri);
     }
 
     // The following functions are overrides required by Solidity.
 
-    function _beforeTokenTransfer(
-        address operator,
-        address from,
-        address to,
-        uint256[] memory ids,
-        uint256[] memory amounts,
-        bytes memory data
-    ) internal override (ERC1155, ERC1155Supply) {
-        super._beforeTokenTransfer(operator, from, to, ids, amounts, data);
-        if (levelOfAccess[msg.sender].isPremiumUser == false) {
-            require(from == address(0), "This token can only be minted, Please upgrade to make it transferable"); // Require it to be minted
-        }
+    function _beforeTokenTransfer(address from, address to, uint256 tokenId, uint256 batchSize)
+        internal
+        override(ERC721, ERC721Enumerable)
+    {
+        super._beforeTokenTransfer(from, to, tokenId, batchSize);
     }
 
-    function _afterTokenTransfer(address from, address to, uint256[] memory ids) internal virtual {
-        if (from == address(0) && levelOfAccess[msg.sender].isPremiumUser == false) {
-            emit Attest(to, ids[0]);
-        }
+    function _burn(uint256 tokenId) internal override(ERC721, ERC721URIStorage) {
+        super._burn(tokenId);
+    }
+
+    function tokenURI(uint256 tokenId)
+        public
+        view
+        override(ERC721, ERC721URIStorage)
+        returns (string memory)
+    {
+        return super.tokenURI(tokenId);
+    }
+
+    function supportsInterface(bytes4 interfaceId)
+        public
+        view
+        override(ERC721, ERC721Enumerable)
+        returns (bool)
+    {
+        return super.supportsInterface(interfaceId);
     }
 }
