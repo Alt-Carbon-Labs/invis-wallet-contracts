@@ -29,8 +29,6 @@ contract Distributor is ERC721, ERC721Enumerable, Ownable, AutomationCompatibleI
     constructor() ERC721("Character", "CHAR") {
     }
 
-    event NFTExpired(address indexed account, string message);
-
     function _baseURI() internal pure override returns (string memory) {
         return "ipfs://Qmb5Ua5Qtoo3tSry7nxDf3X4mvFLZM9HY7BTrS1s5MzH7g/";
     }
