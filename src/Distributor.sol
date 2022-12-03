@@ -127,12 +127,12 @@ contract Distributor is ERC721, ERC721Enumerable, Ownable, AutomationCompatibleI
     /**
      * @notice assumes each wallet can only own one trial NFT
      */
-    function getCharacter()
+    function getCharacter(address ownerAddress)
         public
         view
         returns(Character memory character)
         {
-            return s_characters[msg.sender];
+            return s_characters[ownerAddress];
         }
 
 
