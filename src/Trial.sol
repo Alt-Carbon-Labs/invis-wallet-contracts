@@ -1,53 +1,22 @@
 // SPDX-License-Identifier: MIT
+pragma solidity ^0.8.4;
 
-pragma solidity ^0.8.7;
+import "@openzeppelin/contracts@4.8.0/token/ERC721/ERC721.sol";
+import "@openzeppelin/contracts@4.8.0/token/ERC721/extensions/ERC721Enumerable.sol";
+import "@openzeppelin/contracts@4.8.0/token/ERC721/extensions/ERC721URIStorage.sol";
+import "@openzeppelin/contracts@4.8.0/access/Ownable.sol";
+import "@openzeppelin/contracts@4.8.0/utils/Counters.sol";
+import "@chainlink/contracts/src/v0.8/AutomationCompatible.sol";
 
-import "@chainlink/contracts/src/v0.8/ConfirmedOwner.sol";
-import "@chainlink/contracts/src/v0.8/interfaces/AutomationCompatibleInterface.sol";
-import "@openzeppelin/contracts/security/Pausable.sol";
+contract Distributor is ERC721, ERC721Enumerable, ERC721URIStorage, AutomationCompatibleInterface {
+    using Counters for Counters.Counter;
 
-/**
- * @title The EthBalanceMonitor contract
- * @notice A contract compatible with Chainlink Automation Network that monitors and funds eth addresses
- */
+    uint256 private constant TRIAL_PERIOD = 15;
 
-/**
- * THIS IS AN EXAMPLE CONTRACT THAT USES HARDCODED VALUES FOR CLARITY.
- * THIS IS AN EXAMPLE CONTRACT THAT USES UN-AUDITED CODE.
- * DO NOT USE THIS CODE IN PRODUCTION.
- */
-
-contract TrialPeriodMonitor is
-    ConfirmedOwner,
-    Pausable,
-    AutomationCompatibleInterface
-{
-    // observed limit of 45K + 10k buffer
-    uint256 private constant MIN_GAS_FOR_TRANSFER = 55_000;
-    uint256 public counter;
-
-    // event FundsAdded(uint256 amountAdded, uint256 newBalance, address sender);
-    // event FundsWithdrawn(uint256 amountWithdrawn, address payee);
-    event TopUpSucceeded(address indexed recipient);
-    event TopUpFailed(address indexed recipient);
-    event KeeperRegistryAddressUpdated(address oldAddress, address newAddress);
-    // event MinWaitPeriodUpdated(
-    //     uint256 oldMinWaitPeriod,
-    //     uint256 newMinWaitPeriod
-    // );
-    event Expire(uint256 timestamp);
-    event Perform(uint256[] timestamp);
-    event CharCreated(Character char);
-    event CharUpdated(Character char);
-
-    error InvalidWatchList();
-    error OnlyKeeperRegistry();
-    error DuplicateAddress(address duplicate);
-
-    struct Target {
-        bool isTrialActive;
-        uint56 expiryTimestamp;
-        uint56 lastUpdatedTimestamp; 
+    enum status{
+        trial,
+        premium,
+        expired
     }
     
     struct Character {
@@ -56,102 +25,70 @@ contract TrialPeriodMonitor is
         uint256 expiryTimestamp;
     }
 
-    address private s_keeperRegistryAddress;
-    uint256[] private s_expiryTimes;
-    mapping(address => Target) internal s_targets;
-    // timestamp => character
-    mapping(uint256 => Character) internal s_characters;
+    event CharCreated(Character char);
+    event CharUpdated(Character char);
 
-    /**
-     * 
-     */
-    constructor(
-        // address keeperRegistryAddress,
-        // uint256 _timeBetweenExpiries
-    ) ConfirmedOwner(msg.sender) {
-        counter = 5;
-        // timeBetweenExpiries = _timeBetweenExpiries;
-        // setKeeperRegistryAddress(keeperRegistryAddress);
+    address[] private s_watchList;
+    mapping(address => Character) internal s_characters;
+
+    Counters.Counter private _tokenIdCounter;
+
+    constructor() ERC721("Character", "CHAR") {
     }
 
-    /**
-     * @notice Sets the list of addresses to watch and their funding parameters
-     */
-    function setExpiryTimes(
-    ) external {
-        uint256[] memory watchList = new uint256[](counter);
-        for (uint256 idx = 1; idx <= counter; idx++) {
-            uint256 expiryTime = block.timestamp + (5 * idx);
-            watchList[idx-1] = expiryTime; 
-            
-            s_characters[expiryTime] = Character ({
-                id: idx-1,
+    event NFTExpired(address indexed account, string message);
+
+    function _baseURI() internal pure override returns (string memory) {
+        return "ipfs://Qmb5Ua5Qtoo3tSry7nxDf3X4mvFLZM9HY7BTrS1s5MzH7g/";
+    }
+
+    function safeMint(address to, string memory uri) public {
+        uint256 tokenId = _tokenIdCounter.current();
+        _tokenIdCounter.increment();
+        _safeMint(to, tokenId);
+        _setTokenURI(tokenId, uri);
+        
+        s_watchList.push(msg.sender);
+
+        s_characters[msg.sender] = Character ({
+                id: tokenId,
                 isTrialActive: true,
-                expiryTimestamp: expiryTime
+                expiryTimestamp: block.timestamp + TRIAL_PERIOD
             });
             
-            emit CharCreated(s_characters[expiryTime]);
-            
-        }
-        
-        s_expiryTimes = watchList;
+        emit CharCreated(s_characters[msg.sender]);
     }
 
-    function getExpiryTimes()
+    function getExpiredAddresses()
         public
         view 
-        returns (uint256[] memory expiryTimes)
+        returns (address[] memory expiredAddresses)
     {
-        return s_expiryTimes;
-    }
-
-    /**
-     * @notice Gets a list of addresses that are under funded
-     * @return list of addresses that are underfunded
-     */
-    // function getUnderfundedAddresses() public view returns (address[] memory) {
-    //     address[] memory watchList = s_watchList;
-    //     address[] memory needsFunding = new address[](watchList.length);
-    //     uint256 count = 0;
-    //     // uint256 minWaitPeriod = s_minWaitPeriodSeconds;
-    //     uint256 balance = address(this).balance;
-    //     Target memory target;
-    //     for (uint256 idx = 0; idx < watchList.length; idx++) {
-    //         target = s_targets[watchList[idx]];
-    //         if (
-    //             target.lastTopUpTimestamp <= block.timestamp &&
-    //             balance >= target.topUpAmountWei &&
-    //             watchList[idx].balance < target.minBalanceWei
-    //         ) {
-    //             needsFunding[count] = watchList[idx];
-    //             count++;
-    //             balance -= target.topUpAmountWei;
-    //         }
-    //     }
-    //     if (count != watchList.length) {
-    //         assembly {
-    //             mstore(needsFunding, count)
-    //         }
-    //     }
-    //     return needsFunding;
-    // }
-
-    /**
-     * @notice Send funds to the addresses provided
-     */
-    function makeExpire(uint256[] memory needsExpiry) public whenNotPaused {
-        Character memory updateTarget;
-        for (uint256 idx = 0; idx < needsExpiry.length; idx++) {
-            updateTarget = s_characters[needsExpiry[idx]];
-
-            updateTarget.isTrialActive = false;
-            emit CharUpdated(updateTarget);
+        address[] memory watchList = s_watchList;
+        address[] memory needsExpiry = new address[](watchList.length);
+        uint256 count = 0;
+        
+        Character memory character;
+        for (uint256 idx = 0; idx < watchList.length; idx++) {
+            character = s_characters[watchList[idx]];
+            if (
+                block.timestamp >= character.expiryTimestamp 
+            ) {
+                needsExpiry[count] = watchList[idx];
+                count++;
+            }
         }
+        if (count != watchList.length) {
+            assembly {
+                mstore(needsExpiry, count)
+            }
+        }
+        return needsExpiry;
     }
 
     /**
-     * @notice Get list of addresses that are underfunded and return payload compatible with Chainlink Automation Network
-     * @return upkeepNeeded signals if upkeep is needed, performData is an abi encoded list of addresses that need funds
+     * @notice Get list of addresses that have trials expired and return payload compatible with Chainlink Automation Network
+     * @return upkeepNeeded signals if upkeep is needed, performData is an abi encoded list of addresses that need update
      */
     function checkUpkeep(
         bytes calldata
@@ -159,128 +96,80 @@ contract TrialPeriodMonitor is
         external
         view
         override
-        whenNotPaused
         returns (bool upkeepNeeded, bytes memory performData)
     {
-        uint256[] memory needsExpiry = getExpiryTimes();
+        address[] memory needsExpiry = getExpiredAddresses();
         upkeepNeeded = needsExpiry.length > 0;
         performData = abi.encode(needsExpiry);
         return (upkeepNeeded, performData);
     }
 
     /**
-     * @notice Called by Chainlink Automation Node to send funds to underfunded addresses
-     * @param performData The abi encoded list of addresses to fund
+     * @notice Called by Chainlink Automation Node to update trial status
+     * @param performData The abi encoded list of addresses to update trial status
      */
     function performUpkeep(
         bytes calldata performData
-    ) external override whenNotPaused {
-        uint256[] memory needsExpiry = abi.decode(performData, (uint256[]));
+    ) external override  {
+        address[] memory needsExpiry = abi.decode(performData, (address[]));
         makeExpire(needsExpiry);
     }
 
     /**
-     * @notice Withdraws the contract balance
-     * @param amount The amount of eth (in wei) to withdraw
-     * @param payee The address to pay
+     * @notice update Character trial status to expired
      */
-    // function withdraw(
-    //     uint256 amount,
-    //     address payable payee
-    // ) external onlyOwner {
-    //     require(payee != address(0));
-    //     emit FundsWithdrawn(amount, payee);
-    //     payee.transfer(amount);
-    // }
+    function makeExpire(address[] memory needsExpiry) public {
+        Character memory updateCharacter;
+        for (uint256 idx = 0; idx < needsExpiry.length; idx++) {
+            updateCharacter = s_characters[needsExpiry[idx]];
 
-    /**
-     * @notice Receive funds
-     */
-    // receive() external payable {
-    //     emit FundsAdded(msg.value, address(this).balance, msg.sender);
-    // }
-
-    /**
-     * @notice Sets the Chainlink Automation registry address
-     */
-    function setKeeperRegistryAddress(
-        address keeperRegistryAddress
-    ) public onlyOwner {
-        require(keeperRegistryAddress != address(0));
-        emit KeeperRegistryAddressUpdated(
-            s_keeperRegistryAddress,
-            keeperRegistryAddress
-        );
-        s_keeperRegistryAddress = keeperRegistryAddress;
-    }
-
-    /**
-     * @notice Sets the minimum wait period (in seconds) for addresses between funding
-     */
-    // function setMinWaitPeriodSeconds(uint256 period) public onlyOwner {
-    //     emit MinWaitPeriodUpdated(s_minWaitPeriodSeconds, period);
-    //     s_minWaitPeriodSeconds = period;
-    // }
-
-    /**
-     * @notice Gets the Chainlink Automation registry address
-     */
-    function getKeeperRegistryAddress()
-        external
-        view
-        returns (address keeperRegistryAddress)
-    {
-        return s_keeperRegistryAddress;
-    }
-
-    /**
-     * @notice Gets the minimum wait period
-     */
-    // function getMinWaitPeriodSeconds() external view returns (uint256) {
-    //     return s_minWaitPeriodSeconds;
-    // }
-
-    /**
-     * @notice Gets configuration information for an address on the watchlist
-     */
-    // function getAccountInfo(
-    //     address targetAddress
-    // )
-    //     external
-    //     view
-    //     returns (
-    //         bool isActive,
-    //         uint96 minBalanceWei,
-    //         uint96 topUpAmountWei,
-    //         uint56 lastTopUpTimestamp
-    //     )
-    // {
-    //     Target memory target = s_targets[targetAddress];
-    //     return (
-    //         target.isTrialActive,
-    //         target.expiryTimestamp,
-    //         target.lastUpdatedTimestamp
-    //     );
-    // }
-
-    /**
-     * @notice Pauses the contract, which prevents executing performUpkeep
-     */
-    function pause() external onlyOwner {
-        _pause();
-    }
-
-    /**
-     * @notice Unpauses the contract
-     */
-    function unpause() external onlyOwner {
-        _unpause();
-    }
-
-    modifier onlyKeeperRegistry() {
-        if (msg.sender != s_keeperRegistryAddress) {
-            revert OnlyKeeperRegistry();
+            s_characters[needsExpiry[idx]] = Character({
+                id: updateCharacter.id,
+                isTrialActive: false,
+                expiryTimestamp: updateCharacter.expiryTimestamp
+            });
+            emit CharUpdated(s_characters[needsExpiry[idx]]);
         }
-        _;
+    }
+    
+    function getCharacter()
+        public
+        view
+        returns(Character memory character)
+        {
+            return s_characters[msg.sender];
+        }
+
+
+
+    // The following functions are overrides required by Solidity.
+
+    function _beforeTokenTransfer(address from, address to, uint256 tokenId, uint256 batchSize)
+        internal
+        override(ERC721, ERC721Enumerable)
+    {
+        super._beforeTokenTransfer(from, to, tokenId, batchSize);
+    }
+
+    function _burn(uint256 tokenId) internal override(ERC721, ERC721URIStorage) {
+        super._burn(tokenId);
+    }
+
+    function tokenURI(uint256 tokenId)
+        public
+        view
+        override(ERC721, ERC721URIStorage)
+        returns (string memory)
+    {
+        return super.tokenURI(tokenId);
+    }
+
+    function supportsInterface(bytes4 interfaceId)
+        public
+        view
+        override(ERC721, ERC721Enumerable)
+        returns (bool)
+    {
+        return super.supportsInterface(interfaceId);
     }
 }
